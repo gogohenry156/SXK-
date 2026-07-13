@@ -113,7 +113,7 @@ export default function AuthScreen({ onAuthSuccess, dbConfigured }: AuthScreenPr
 
   const handleUseDemoAccount = () => {
     setEmail('test@test.com');
-    setPassword('123');
+    setPassword('123456');
     setIsLogin(true);
     setError(null);
   };

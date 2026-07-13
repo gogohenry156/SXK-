@@ -584,7 +584,7 @@ const offlineUsers = new Map<string, any>();
 const offlineUserData = new Map<string, any>();
 
 // Seed a default test account for fast, instant client-side evaluation
-offlineUsers.set('test@test.com', { email: 'test@test.com', password: '123' });
+offlineUsers.set('test@test.com', { email: 'test@test.com', password: '123456' });
 
 function getCloudBaseDb() {
   if (cloudbaseDb) return cloudbaseDb;
@@ -633,29 +633,38 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const db = getCloudBaseDb();
-    if (db) {
-      // Check if user already exists in cloud database
-      const checkRes = await db.collection('sxk_accounts').where({ email }).get();
-      if (checkRes && checkRes.data && checkRes.data.length > 0) {
-        res.status(400).json({ error: '该邮箱已被注册，请直接登录' });
-        return;
-      }
+    let cloudSaved = false;
 
-      // Add account document
-      await db.collection('sxk_accounts').add({
-        email,
-        password, // In this educational sandbox, we store it directly. In production, we would use a strong hash like bcrypt.
-        createdAt: new Date().toISOString()
-      });
-      console.log(`[CloudBase] Registered cloud account: ${email}`);
-    } else {
+    if (db) {
+      try {
+        // Check if user already exists in cloud database
+        const checkRes = await db.collection('sxk_accounts').where({ email }).get();
+        if (checkRes && checkRes.data && checkRes.data.length > 0) {
+          res.status(400).json({ error: '该邮箱已被注册，请直接登录' });
+          return;
+        }
+
+        // Add account document
+        await db.collection('sxk_accounts').add({
+          email,
+          password, // In this educational sandbox, we store it directly. In production, we would use a strong hash like bcrypt.
+          createdAt: new Date().toISOString()
+        });
+        console.log(`[CloudBase] Registered cloud account: ${email}`);
+        cloudSaved = true;
+      } catch (dbErr: any) {
+        console.warn('[CloudBase] Cloud registration failed, falling back to local memory:', dbErr.message);
+      }
+    }
+
+    if (!cloudSaved) {
       // In-memory registration fallback for local test
       if (offlineUsers.has(email)) {
         res.status(400).json({ error: '该邮箱已被注册，请直接登录' });
         return;
       }
       offlineUsers.set(email, { email, password });
-      console.log(`[Local Memory] Registered local account: ${email}`);
+      console.log(`[Local Memory] Registered local account fallback: ${email}`);
     }
 
     res.json({ success: true, email });
@@ -678,14 +687,21 @@ app.post('/api/auth/login', async (req, res) => {
     let authenticatedUser = null;
 
     if (db) {
-      const checkRes = await db.collection('sxk_accounts').where({ email }).get();
-      if (checkRes && checkRes.data && checkRes.data.length > 0) {
-        const found = checkRes.data[0];
-        if (found.password === password) {
-          authenticatedUser = found;
+      try {
+        const checkRes = await db.collection('sxk_accounts').where({ email }).get();
+        if (checkRes && checkRes.data && checkRes.data.length > 0) {
+          const found = checkRes.data[0];
+          if (found.password === password) {
+            authenticatedUser = found;
+          }
         }
+      } catch (dbErr: any) {
+        console.warn('[CloudBase] Cloud login failed, falling back to local memory:', dbErr.message);
       }
-    } else {
+    }
+
+    // Always check the local offline database if cloud lookup didn't succeed
+    if (!authenticatedUser) {
       const found = offlineUsers.get(email);
       if (found && found.password === password) {
         authenticatedUser = found;
@@ -702,17 +718,25 @@ app.post('/api/auth/login', async (req, res) => {
     let completedScores = [];
     let orders = [];
     let reportHistory = [];
+    let loadedFromCloud = false;
 
     if (db) {
-      const dataRes = await db.collection('sxk_user_data').where({ email }).get();
-      if (dataRes && dataRes.data && dataRes.data.length > 0) {
-        const data = dataRes.data[0];
-        child = data.child || null;
-        completedScores = data.completedScores || [];
-        orders = data.orders || [];
-        reportHistory = data.reportHistory || [];
+      try {
+        const dataRes = await db.collection('sxk_user_data').where({ email }).get();
+        if (dataRes && dataRes.data && dataRes.data.length > 0) {
+          const data = dataRes.data[0];
+          child = data.child || null;
+          completedScores = data.completedScores || [];
+          orders = data.orders || [];
+          reportHistory = data.reportHistory || [];
+          loadedFromCloud = true;
+        }
+      } catch (dbErr: any) {
+        console.warn('[CloudBase] Cloud loading child data failed:', dbErr.message);
       }
-    } else {
+    }
+
+    if (!loadedFromCloud) {
       const data = offlineUserData.get(email);
       if (data) {
         child = data.child || null;
