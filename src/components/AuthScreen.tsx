@@ -48,7 +48,16 @@ export default function AuthScreen({ onAuthSuccess, dbConfigured }: AuthScreenPr
           body: JSON.stringify({ email, password }),
         });
 
-        const data = await resp.json();
+        let data: any = {};
+        try {
+          data = await resp.json();
+        } catch (jsonErr) {
+          if (!resp.ok) {
+            throw new Error(`登录请求异常 (HTTP ${resp.status})`);
+          }
+          throw new Error('服务器返回了无效的响应格式，请稍后再试');
+        }
+
         if (!resp.ok) {
           throw new Error(data.error || '登录失败，请检查账号密码');
         }
@@ -69,7 +78,16 @@ export default function AuthScreen({ onAuthSuccess, dbConfigured }: AuthScreenPr
           body: JSON.stringify({ email, password }),
         });
 
-        const data = await resp.json();
+        let data: any = {};
+        try {
+          data = await resp.json();
+        } catch (jsonErr) {
+          if (!resp.ok) {
+            throw new Error(`注册请求异常 (HTTP ${resp.status})`);
+          }
+          throw new Error('服务器返回了无效的响应格式，请稍后再试');
+        }
+
         if (!resp.ok) {
           throw new Error(data.error || '注册失败，请稍后重试');
         }
@@ -84,7 +102,12 @@ export default function AuthScreen({ onAuthSuccess, dbConfigured }: AuthScreenPr
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email, password }),
             });
-            const loginData = await loginResp.json();
+            let loginData: any = {};
+            try {
+              loginData = await loginResp.json();
+            } catch (e) {
+              // ignore
+            }
             if (loginResp.ok) {
               onAuthSuccess(
                 loginData.email,

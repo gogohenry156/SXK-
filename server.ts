@@ -615,6 +615,24 @@ function getCloudBaseDb() {
 }
 
 // Endpoint to check database connection status
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Database operation timed out'));
+    }, timeoutMs);
+
+    promise
+      .then((res) => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 app.get('/api/db/status', (req, res) => {
   const db = getCloudBaseDb();
   res.json({
@@ -638,18 +656,18 @@ app.post('/api/auth/register', async (req, res) => {
     if (db) {
       try {
         // Check if user already exists in cloud database
-        const checkRes = await db.collection('sxk_accounts').where({ email }).get();
+        const checkRes: any = await withTimeout(db.collection('sxk_accounts').where({ email }).get(), 2000);
         if (checkRes && checkRes.data && checkRes.data.length > 0) {
           res.status(400).json({ error: '该邮箱已被注册，请直接登录' });
           return;
         }
 
         // Add account document
-        await db.collection('sxk_accounts').add({
+        await withTimeout(db.collection('sxk_accounts').add({
           email,
           password, // In this educational sandbox, we store it directly. In production, we would use a strong hash like bcrypt.
           createdAt: new Date().toISOString()
-        });
+        }), 2000);
         console.log(`[CloudBase] Registered cloud account: ${email}`);
         cloudSaved = true;
       } catch (dbErr: any) {
@@ -688,7 +706,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (db) {
       try {
-        const checkRes = await db.collection('sxk_accounts').where({ email }).get();
+        const checkRes: any = await withTimeout(db.collection('sxk_accounts').where({ email }).get(), 2000);
         if (checkRes && checkRes.data && checkRes.data.length > 0) {
           const found = checkRes.data[0];
           if (found.password === password) {
@@ -722,7 +740,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (db) {
       try {
-        const dataRes = await db.collection('sxk_user_data').where({ email }).get();
+        const dataRes: any = await withTimeout(db.collection('sxk_user_data').where({ email }).get(), 2000);
         if (dataRes && dataRes.data && dataRes.data.length > 0) {
           const data = dataRes.data[0];
           child = data.child || null;
@@ -785,28 +803,52 @@ app.get('/api/db/load', async (req, res) => {
       return;
     }
 
-    let result = null;
-    if (email && typeof email === 'string') {
-      result = await db.collection('sxk_user_data').where({ email }).get();
-    } else if (deviceId && typeof deviceId === 'string') {
-      result = await db.collection('sxk_user_data').where({ deviceId }).get();
-    } else {
-      res.status(400).json({ error: 'Missing deviceId or email parameter.' });
-      return;
-    }
-    
-    if (result && result.data && result.data.length > 0) {
-      const data = result.data[0];
+    let result: any = null;
+    try {
+      if (email && typeof email === 'string') {
+        result = await withTimeout(db.collection('sxk_user_data').where({ email }).get(), 2000);
+      } else if (deviceId && typeof deviceId === 'string') {
+        result = await withTimeout(db.collection('sxk_user_data').where({ deviceId }).get(), 2000);
+      } else {
+        res.status(400).json({ error: 'Missing deviceId or email parameter.' });
+        return;
+      }
+      
+      if (result && result.data && result.data.length > 0) {
+        const data = result.data[0];
+        res.json({
+          source: 'cloud',
+          child: data.child || null,
+          completedScores: data.completedScores || [],
+          orders: data.orders || [],
+          reportHistory: data.reportHistory || []
+        });
+      } else {
+        res.json({
+          source: 'cloud',
+          child: null,
+          completedScores: [],
+          orders: [],
+          reportHistory: []
+        });
+      }
+    } catch (err: any) {
+      console.warn('[CloudBase Load Timeout/Error] Falling back to offline local memory:', err.message);
+      if (email && typeof email === 'string') {
+        const localData = offlineUserData.get(email);
+        if (localData) {
+          res.json({
+            source: 'local_server',
+            child: localData.child || null,
+            completedScores: localData.completedScores || [],
+            orders: localData.orders || [],
+            reportHistory: localData.reportHistory || []
+          });
+          return;
+        }
+      }
       res.json({
-        source: 'cloud',
-        child: data.child || null,
-        completedScores: data.completedScores || [],
-        orders: data.orders || [],
-        reportHistory: data.reportHistory || []
-      });
-    } else {
-      res.json({
-        source: 'cloud',
+        source: 'local_server',
         child: null,
         completedScores: [],
         orders: [],
@@ -824,57 +866,63 @@ app.post('/api/db/save', async (req, res) => {
   try {
     const { deviceId, email, child, completedScores, orders, reportHistory } = req.body;
 
+    // Always update the offline local memory database as a hot backup
+    if (email) {
+      offlineUserData.set(email, {
+        child,
+        completedScores,
+        orders,
+        reportHistory
+      });
+    }
+
     const db = getCloudBaseDb();
     if (!db) {
-      // Save locally in offline server memory if email is present
-      if (email) {
-        offlineUserData.set(email, {
-          child,
-          completedScores,
-          orders,
-          reportHistory
-        });
-      }
       res.json({ success: true, localSaved: true });
       return;
     }
 
-    let checkResult = null;
-    let hasExisting = false;
-    let queryField: any = {};
+    try {
+      let checkResult: any = null;
+      let hasExisting = false;
+      let queryField: any = {};
 
-    if (email) {
-      queryField = { email };
-      checkResult = await db.collection('sxk_user_data').where({ email }).get();
-      hasExisting = checkResult && checkResult.data && checkResult.data.length > 0;
-    } else if (deviceId) {
-      queryField = { deviceId };
-      checkResult = await db.collection('sxk_user_data').where({ deviceId }).get();
-      hasExisting = checkResult && checkResult.data && checkResult.data.length > 0;
-    } else {
-      res.status(400).json({ error: 'Missing deviceId or email.' });
-      return;
+      if (email) {
+        queryField = { email };
+        checkResult = await withTimeout(db.collection('sxk_user_data').where({ email }).get(), 2000);
+        hasExisting = checkResult && checkResult.data && checkResult.data.length > 0;
+      } else if (deviceId) {
+        queryField = { deviceId };
+        checkResult = await withTimeout(db.collection('sxk_user_data').where({ deviceId }).get(), 2000);
+        hasExisting = checkResult && checkResult.data && checkResult.data.length > 0;
+      } else {
+        res.status(400).json({ error: 'Missing deviceId or email.' });
+        return;
+      }
+
+      const recordPayload = {
+        ...queryField,
+        child,
+        completedScores,
+        orders,
+        reportHistory,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (hasExisting) {
+        const docId = checkResult.data[0]._id;
+        await withTimeout(db.collection('sxk_user_data').doc(docId).set(recordPayload), 2000);
+        console.log(`[CloudBase] Successfully updated data for ${email ? 'email ' + email : 'device ' + deviceId}`);
+      } else {
+        await withTimeout(db.collection('sxk_user_data').add(recordPayload), 2000);
+        console.log(`[CloudBase] Successfully created new record for ${email ? 'email ' + email : 'device ' + deviceId}`);
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.warn('[CloudBase Save Timeout/Error] Data is hot-backed up in local memory:', err.message);
+      res.json({ success: true, localSavedFallback: true });
     }
-
-    const recordPayload = {
-      ...queryField,
-      child,
-      completedScores,
-      orders,
-      reportHistory,
-      updatedAt: new Date().toISOString()
-    };
-
-    if (hasExisting) {
-      const docId = checkResult.data[0]._id;
-      await db.collection('sxk_user_data').doc(docId).set(recordPayload);
-      console.log(`[CloudBase] Successfully updated data for ${email ? 'email ' + email : 'device ' + deviceId}`);
-    } else {
-      await db.collection('sxk_user_data').add(recordPayload);
-      console.log(`[CloudBase] Successfully created new record for ${email ? 'email ' + email : 'device ' + deviceId}`);
-    }
-
-    res.json({ success: true });
   } catch (err: any) {
     console.error('[CloudBase Save Error]:', err.message);
     res.status(500).json({ error: `CloudBase save failed: ${err.message}` });
