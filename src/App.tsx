@@ -97,6 +97,10 @@ export default function App() {
       if (!resp.ok) {
         throw new Error(`Sync failed with status ${resp.status}`);
       }
+      const ct = resp.headers.get('content-type');
+      if (!ct || !ct.includes('application/json')) {
+        throw new Error('服务器响应格式不正确(期望JSON格式)');
+      }
       const data = await resp.json();
       if (data.success) {
         setSyncError(null);
@@ -150,6 +154,8 @@ export default function App() {
       try {
         const statusResp = await fetch('/api/db/status');
         if (!statusResp.ok) return;
+        const statusCt = statusResp.headers.get('content-type');
+        if (!statusCt || !statusCt.includes('application/json')) return;
         const statusData = await statusResp.json();
         
         setDbConfigured(statusData.configured);
@@ -161,6 +167,8 @@ export default function App() {
 
         const loadResp = await fetch(`/api/db/load?${queryParam}`);
         if (!loadResp.ok) return;
+        const loadCt = loadResp.headers.get('content-type');
+        if (!loadCt || !loadCt.includes('application/json')) return;
         const loadData = await loadResp.json();
 
         if (loadData.source === 'cloud' || loadData.source === 'local_server') {
@@ -705,7 +713,10 @@ export default function App() {
                     setSelectedDimensionId(dimId);
                     setCurrentView('assessment');
                   }}
-                  onViewReport={() => setCurrentView('report')}
+                  onViewReport={() => {
+                    setViewingLiveT1(true);
+                    setCurrentView('report');
+                  }}
                   onStartT1Screening={() => setCurrentView('t1_screening')}
                 />
               </div>
@@ -739,219 +750,23 @@ export default function App() {
                 />
               </div>
             ) : currentView === 'report' ? (
-              /* Detailed clinic analysis reports with server-side AI report features and Specialized Archive */
-              viewingLiveT1 ? (
-                <div className="animate-fade-in">
-                  <AnalysisReport
-                    child={child}
-                    completedScores={completedScores}
-                    onBack={() => setViewingLiveT1(false)}
-                    onSaveReportToHistory={handleSaveReportToHistory}
-                    onGoToLanguageSpecial={() => setCurrentView('language_special')}
-                    historicalRecord={null}
-                  />
-                </div>
-              ) : activeT1Record ? (
-                <div className="animate-fade-in">
-                  <AnalysisReport
-                    child={child}
-                    completedScores={activeT1Record.scores}
-                    onBack={() => setActiveT1Record(null)}
-                    onSaveReportToHistory={handleSaveReportToHistory}
-                    onGoToLanguageSpecial={() => setCurrentView('language_special')}
-                    historicalRecord={activeT1Record}
-                  />
-                </div>
-              ) : (
-                <div className="animate-fade-in max-w-5xl mx-auto space-y-8 pb-12">
-                  {/* Page header */}
-                  <div className="bg-white px-6 py-6 rounded-3xl border border-brand-stone shadow-sm text-left flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <h2 className="text-xl font-black text-brand-forest tracking-tight">数字化发育档案 & 临床诊断报告库</h2>
-                      <p className="text-xs text-brand-charcoal/60 font-medium mt-1">归档受测儿童历次综合筛查与临床专项深度诊断数据，符合 HIPAA 临床数据管理规范。</p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs bg-brand-sage/60 border border-brand-stone/40 px-3 py-1 rounded-full text-brand-forest font-bold">
-                        受测儿：{child?.name} ({child?.gender === 'boy' ? '男' : '女'})
-                      </span>
-                      <button
-                        onClick={() => setCurrentView('dashboard')}
-                        className="px-4 py-1.5 rounded-xl border border-brand-stone/80 text-xs font-bold hover:bg-brand-sage/20 transition"
-                      >
-                        返回控制面板
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 2-Column Grid */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Left side: T1 screening reports (5 cols) */}
-                    <div className="lg:col-span-5 bg-white border border-brand-stone rounded-3xl p-6 shadow-sm space-y-6 text-left">
-                      <div className="flex items-center justify-between border-b border-brand-stone/60 pb-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 bg-brand-sage/60 rounded-lg flex items-center justify-center text-brand-forest">
-                            <Layers size={16} />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-black text-brand-charcoal">T1 脑发育综合筛查报告</h3>
-                            <p className="text-[10px] text-brand-charcoal/50">9维度多感官神经网络基础筛查</p>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-bold bg-brand-sage px-2 py-0.5 rounded text-brand-forest">筛查层</span>
-                      </div>
-
-                      {/* Live Screening Card */}
-                      <div className="bg-brand-sage/20 border border-brand-stone/60 rounded-2xl p-4 space-y-3">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <span className="text-[10px] bg-brand-forest text-white font-extrabold px-1.5 py-0.5 rounded">实时动态</span>
-                            <h4 className="text-xs font-bold mt-1.5 text-brand-charcoal">当前全维动态脑智筛查进度</h4>
-                            <p className="text-[10px] text-brand-charcoal/60 mt-0.5">基于已导入的 T1 测评分数实时核算</p>
-                          </div>
-                          <span className="text-xs font-extrabold text-brand-forest">{completedScores.filter(s => s.tierId === 'T1').length}/9 维度</span>
-                        </div>
-                        <button
-                          onClick={() => setViewingLiveT1(true)}
-                          className="w-full py-2 bg-brand-forest hover:bg-brand-forest-dark text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-brand-forest/10"
-                        >
-                          <Sparkles size={12} />
-                          查看实时综合诊断报告
-                        </button>
-                      </div>
-
-                      {/* Saved T1 Reports History List */}
-                      <div className="space-y-3">
-                        <h4 className="text-xs font-bold text-brand-charcoal/70">已存归档报告：</h4>
-                        {reportHistory.filter(r => r.type === 'T1_SCREENING').length === 0 ? (
-                          <div className="border border-dashed border-brand-stone rounded-2xl py-6 px-4 text-center text-xs text-brand-charcoal/40">
-                            暂无归档的 T1 综合筛查诊断
-                          </div>
-                        ) : (
-                          <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-                            {reportHistory
-                              .filter(r => r.type === 'T1_SCREENING')
-                              .map(rec => {
-                                const delayCount = rec.scores.filter(s => s.status === 'delay').length;
-                                return (
-                                  <div
-                                    key={rec.id}
-                                    onClick={() => setActiveT1Record(rec)}
-                                    className="border border-brand-stone/60 hover:border-brand-forest/60 hover:bg-brand-sage/5 rounded-2xl p-3.5 text-left cursor-pointer transition group"
-                                  >
-                                    <div className="flex justify-between items-center">
-                                      <span className="text-[10px] text-brand-charcoal/50 font-bold">
-                                        {new Date(rec.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                      </span>
-                                      <span className="text-[10px] text-brand-forest font-bold flex items-center gap-0.5 group-hover:underline">
-                                        查看报告 <ChevronRight size={10} />
-                                      </span>
-                                    </div>
-                                    <h5 className="text-xs font-bold text-brand-charcoal mt-1">全维脑网络综合评估报告</h5>
-                                    <div className="flex items-center gap-2 mt-2">
-                                      <span className="text-[10px] bg-red-50 text-red-600 border border-red-100 rounded px-1.5 font-medium">
-                                        迟缓维度: {delayCount}
-                                      </span>
-                                      <span className="text-[10px] bg-brand-sage/40 text-brand-forest border border-brand-stone/40 rounded px-1.5 font-medium">
-                                        已测: {rec.scores.length}
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right side: T2/T3 Specialized Reports (7 cols) */}
-                    <div className="lg:col-span-7 bg-white border border-brand-stone rounded-3xl p-6 shadow-sm space-y-6 text-left">
-                      <div className="flex items-center justify-between border-b border-brand-stone/60 pb-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center text-red-500">
-                            <ShieldCheck size={16} />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-black text-brand-charcoal">T2/T3 脑网络深度专项评估成长报告</h3>
-                            <p className="text-[10px] text-brand-charcoal/50">针对发育异常维度进行的高精度互动评估与脑科学数据分析</p>
-                          </div>
-                        </div>
-                        <span className="text-[10px] font-bold bg-red-50 px-2 py-0.5 rounded text-red-600">评估层</span>
-                      </div>
-
-                      {/* Specialized reports list */}
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <h4 className="text-xs font-bold text-brand-charcoal/70">专项深度评估报告记录：</h4>
-                          <span className="text-[10px] bg-brand-stone px-2 py-0.5 rounded text-brand-charcoal/60 font-bold">
-                            共 {reportHistory.filter(r => r.type === 'T2_T3_SPECIALIZED').length} 份报告
-                          </span>
-                        </div>
-
-                        {reportHistory.filter(r => r.type === 'T2_T3_SPECIALIZED').length === 0 ? (
-                          <div className="border border-dashed border-brand-stone rounded-3xl py-16 px-4 text-center space-y-3">
-                            <div className="w-12 h-12 bg-brand-sage/30 rounded-full flex items-center justify-center mx-auto text-brand-forest/60">
-                              <BookOpen size={20} />
-                            </div>
-                            <div className="max-w-xs mx-auto space-y-1">
-                              <p className="text-xs font-bold text-brand-charcoal/60">暂无专项成长评估报告</p>
-                              <p className="text-[10px] text-brand-charcoal/40">当您对某个发育领域完成 T2（能力自评）及 T3（专项互动）评估并点击“生成 AI 专项深度报告”时，报告将自动录入此处。</p>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[440px] overflow-y-auto pr-1 pb-2">
-                            {reportHistory
-                              .filter(r => r.type === 'T2_T3_SPECIALIZED')
-                              .map(rec => {
-                                const t3Result = rec.scores.find(s => s.tierId === 'T3');
-                                const dimensionName = rec.dimensionName || t3Result?.dimensionName || '未知专项';
-                                return (
-                                  <div
-                                    key={rec.id}
-                                    onClick={() => {
-                                      setActiveSpecializedRecordId(rec.id);
-                                      setCurrentView('specialized_report');
-                                    }}
-                                    className="bg-brand-cream/40 border border-brand-stone/60 hover:border-red-400 hover:bg-red-50/5 rounded-2xl p-4 text-left cursor-pointer transition group relative overflow-hidden"
-                                  >
-                                    <div className="absolute top-0 right-0 w-16 h-16 bg-red-100/10 rounded-bl-full pointer-events-none transition group-hover:bg-red-100/20" />
-                                    <div className="flex justify-between items-center">
-                                      <span className="text-[9px] bg-red-50 border border-red-100 text-red-600 px-1.5 py-0.5 rounded font-extrabold">
-                                        深度专项成长评估
-                                      </span>
-                                      <span className="text-[9px] text-brand-charcoal/40 font-bold">
-                                        {new Date(rec.createdAt).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}
-                                      </span>
-                                    </div>
-
-                                    <h5 className="text-sm font-black text-brand-charcoal mt-2.5 flex items-center gap-1 group-hover:text-red-700">
-                                      {dimensionName} 专项评估
-                                      <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition" />
-                                    </h5>
-
-                                    <div className="space-y-1.5 mt-4 pt-3 border-t border-brand-stone/40">
-                                      <div className="flex justify-between text-[10px]">
-                                        <span className="text-brand-charcoal/60">表现特征:</span>
-                                        <span className={`font-bold ${t3Result?.status === 'delay' ? 'text-red-500' : 'text-amber-600'}`}>
-                                          {t3Result?.status === 'delay' ? '发育迟缓 (Delay)' : '边缘警示 (Borderline)'}
-                                        </span>
-                                      </div>
-                                      <div className="flex justify-between text-[10px]">
-                                        <span className="text-brand-charcoal/60">实测精确得分:</span>
-                                        <span className="font-extrabold text-brand-charcoal/80">
-                                          {t3Result ? `${t3Result.score}/${t3Result.maxScore} 分` : 'N/A'}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )
+              /* Detailed clinic analysis reports with server-side AI report features and Integrated Archive Selector */
+              <div className="animate-fade-in">
+                <AnalysisReport
+                  child={child!}
+                  completedScores={activeT1Record ? activeT1Record.scores : completedScores}
+                  onBack={() => setCurrentView('dashboard')}
+                  onSaveReportToHistory={handleSaveReportToHistory}
+                  onGoToLanguageSpecial={() => setCurrentView('language_special')}
+                  historicalRecord={activeT1Record}
+                  reportHistory={reportHistory}
+                  onSelectT1Record={(rec) => setActiveT1Record(rec)}
+                  onSelectSpecializedRecord={(id) => {
+                    setActiveSpecializedRecordId(id);
+                    setCurrentView('specialized_report');
+                  }}
+                />
+              </div>
             ) : currentView === 'specialized_report' ? (
               /* Display high-fidelity multi-dimensional T2/T3 specialized report */
               <div className="animate-fade-in">

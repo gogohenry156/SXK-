@@ -4,7 +4,7 @@ import { formatAge } from '../utils/dateUtils';
 import { 
   ArrowLeft, Brain, Sparkles, CheckCircle2, AlertTriangle, AlertCircle, 
   RefreshCw, Layers, ShieldAlert, Award, Compass, HeartHandshake, Printer,
-  Activity, MessageSquare, Smile, BookOpen, Target, Home, Heart, Calendar, User, Phone, Check, Info
+  Activity, MessageSquare, Smile, BookOpen, Target, Home, Heart, Calendar, User, Phone, Check, Info, ChevronDown, ShieldCheck
 } from 'lucide-react';
 import { DIMENSIONS_DATA } from '../data';
 import { 
@@ -63,18 +63,39 @@ interface AnalysisReportProps {
   onSaveReportToHistory: (record: AssessmentRecord) => void;
   onGoToLanguageSpecial?: () => void;
   historicalRecord?: AssessmentRecord | null;
+  reportHistory: AssessmentRecord[];
+  onSelectT1Record: (record: AssessmentRecord | null) => void;
+  onSelectSpecializedRecord: (recordId: string) => void;
 }
 
-export default function AnalysisReport({ child, completedScores, onBack, onSaveReportToHistory, onGoToLanguageSpecial, historicalRecord }: AnalysisReportProps) {
+export default function AnalysisReport({ 
+  child, 
+  completedScores, 
+  onBack, 
+  onSaveReportToHistory, 
+  onGoToLanguageSpecial, 
+  historicalRecord,
+  reportHistory,
+  onSelectT1Record,
+  onSelectSpecializedRecord
+}: AnalysisReportProps) {
   const [loading, setLoading] = useState(false);
   const [aiReport, setAiReport] = useState<AssessmentRecord['aiReport'] | null>(null);
   const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (historicalRecord && historicalRecord.aiReport) {
-      setAiReport(historicalRecord.aiReport);
-      setIsAiGenerated(true);
+    if (historicalRecord) {
+      if (historicalRecord.aiReport) {
+        setAiReport(historicalRecord.aiReport);
+        setIsAiGenerated(true);
+      } else {
+        setAiReport(null);
+        setIsAiGenerated(false);
+      }
+    } else {
+      setAiReport(null);
+      setIsAiGenerated(false);
     }
   }, [historicalRecord]);
 
@@ -109,6 +130,11 @@ export default function AnalysisReport({ child, completedScores, onBack, onSaveR
 
       if (!response.ok) {
         throw new Error('网络应答异常，请重试');
+      }
+
+      const ct = response.headers.get('content-type');
+      if (!ct || !ct.includes('application/json')) {
+        throw new Error('服务器响应格式不正确，未能生成AI评估报告');
       }
 
       const data = await response.json();
@@ -159,6 +185,113 @@ export default function AnalysisReport({ child, completedScores, onBack, onSaveR
         <span className="text-xs bg-brand-sage px-3 py-1 text-brand-forest border border-brand-stone/40 rounded-full font-bold">
           受测儿档案：{child.name} ({child.gender === 'boy' ? '男' : '女'}) | {formatAge(child.ageMonth)}
         </span>
+      </div>
+
+      {/* 报告选择与控制中心 (Integrated Report Selector) */}
+      <div className="bg-white p-4.5 rounded-2xl border border-brand-stone shadow-sm flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 text-left">
+        <div className="space-y-1">
+          <div className="text-xs font-bold text-brand-forest flex items-center gap-1.5">
+            <Layers size={14} className="text-brand-moss" />
+            <span>报告类型选择</span>
+          </div>
+          <p className="text-[11px] text-brand-charcoal/65">
+            {historicalRecord 
+              ? `当前正查看：${new Date(historicalRecord.createdAt).toLocaleString('zh-CN')} 归档评估报告`
+              : '当前正查看：实时计算动态筛查报告（最新测评分数）'
+            }
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Real-time Report Button */}
+          <button
+            onClick={() => onSelectT1Record(null)}
+            className={`px-3 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
+              !historicalRecord 
+                ? 'bg-brand-forest text-white border-brand-forest shadow-md shadow-brand-forest/10' 
+                : 'bg-brand-cream/45 hover:bg-brand-sage/20 text-brand-charcoal border-brand-stone/60'
+            }`}
+          >
+            <Sparkles size={12} />
+            实时动态筛查报告
+          </button>
+
+          {/* Historical T1 Dropdown */}
+          <div className="relative group">
+            <button
+              className={`px-3 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer ${
+                historicalRecord && historicalRecord.type === 'T1_SCREENING'
+                  ? 'bg-brand-moss text-white border-brand-moss shadow-md shadow-brand-moss/10'
+                  : 'bg-brand-cream/45 hover:bg-brand-sage/20 text-brand-charcoal border-brand-stone/60'
+              }`}
+            >
+              <Calendar size={12} />
+              <span>历史综合筛查 ({reportHistory.filter(r => r.type === 'T1_SCREENING').length})</span>
+              <ChevronDown size={10} />
+            </button>
+            <div className="absolute right-0 mt-1 w-64 bg-white border border-brand-stone/60 rounded-xl shadow-lg z-30 hidden group-hover:block p-1.5 space-y-1">
+              <div className="text-[9px] font-bold text-brand-charcoal/40 px-2 py-1 border-b border-brand-cream">
+                请选择要查看的历史归档：
+              </div>
+              {reportHistory.filter(r => r.type === 'T1_SCREENING').length === 0 ? (
+                <div className="text-center py-3 text-[10px] text-brand-charcoal/50">暂无归档报告</div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {reportHistory.filter(r => r.type === 'T1_SCREENING').map(rec => (
+                    <button
+                      key={rec.id}
+                      onClick={() => onSelectT1Record(rec)}
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] transition font-medium flex justify-between items-center ${
+                        historicalRecord?.id === rec.id
+                          ? 'bg-brand-sage/20 text-brand-forest font-bold'
+                          : 'hover:bg-brand-cream/40 text-brand-charcoal'
+                      }`}
+                    >
+                      <span>{new Date(rec.createdAt).toLocaleDateString('zh-CN')} {new Date(rec.createdAt).toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}</span>
+                      <span className="text-[9px] text-brand-moss">已测 {rec.scores.length} 维度</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Historical T2/T3 Dropdown */}
+          <div className="relative group">
+            <button
+              className="px-3 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 cursor-pointer bg-brand-cream/45 hover:bg-brand-sage/20 text-brand-charcoal border-brand-stone/60"
+            >
+              <ShieldCheck size={12} className="text-red-600" />
+              <span>深度专项报告 ({reportHistory.filter(r => r.type === 'T2_T3_SPECIALIZED').length})</span>
+              <ChevronDown size={10} />
+            </button>
+            <div className="absolute right-0 mt-1 w-64 bg-white border border-brand-stone/60 rounded-xl shadow-lg z-30 hidden group-hover:block p-1.5 space-y-1">
+              <div className="text-[9px] font-bold text-brand-charcoal/40 px-2 py-1 border-b border-brand-cream">
+                请选择要查看的深度专项报告：
+              </div>
+              {reportHistory.filter(r => r.type === 'T2_T3_SPECIALIZED').length === 0 ? (
+                <div className="text-center py-3 text-[10px] text-brand-charcoal/50">暂无归档报告</div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-0.5">
+                  {reportHistory.filter(r => r.type === 'T2_T3_SPECIALIZED').map(rec => {
+                    const t3Result = rec.scores.find(s => s.tierId === 'T3');
+                    const dimensionName = rec.dimensionName || t3Result?.dimensionName || '未知专项';
+                    return (
+                      <button
+                        key={rec.id}
+                        onClick={() => onSelectSpecializedRecord(rec.id)}
+                        className="w-full text-left px-2 py-1.5 rounded-lg text-[10px] transition font-medium hover:bg-brand-cream/40 text-brand-charcoal flex justify-between items-center"
+                      >
+                        <span className="font-bold">{dimensionName} 评估</span>
+                        <span className="text-[9px] text-brand-charcoal/50">{new Date(rec.createdAt).toLocaleDateString('zh-CN')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Primary diagnostic score cards overview */}

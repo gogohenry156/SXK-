@@ -35,21 +35,73 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // DashScope (Alibaba Qwen) helpers — OpenAI-compatible mode
-const DASHSCOPE_COMPAT_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const QWEN_REPORT_MODEL = process.env.QWEN_REPORT_MODEL || 'qwen3.7-max';
 const QWEN_ASR_MODEL = process.env.QWEN_ASR_MODEL || 'qwen3-asr-flash';
 
 function getDashScopeKey(): string | null {
-  const key = process.env.DASHSCOPE_API_KEY || process.env.ALI_LLM_API_KEY;
-  if (!key || key === 'MY_DASHSCOPE_API_KEY') return null;
-  return key;
+  let key = process.env.DASHSCOPE_API_KEY || process.env.ALI_LLM_API_KEY || '';
+  let base = process.env.DASHSCOPE_API_BASE || '';
+
+  // Auto-swap if the values were entered in reversed fields
+  const isKeyAnEndpoint = key.includes('aliyuncs.com') || key.includes('maas.');
+  const isBaseAKey = base.startsWith('sk-') || (base && !base.includes('aliyuncs.com') && !base.includes('maas.'));
+
+  if (isKeyAnEndpoint && isBaseAKey) {
+    key = base;
+  }
+
+  if (!key || key === 'MY_DASHSCOPE_API_KEY' || key === '') return null;
+  
+  // If the key still resolves to an endpoint string, it's not a valid API Key
+  if (key.includes('aliyuncs.com') || key.includes('maas.')) {
+    return null;
+  }
+  
+  return key.trim();
+}
+
+function getDashScopeEndpoint(): string {
+  let base = process.env.DASHSCOPE_API_BASE || '';
+  let key = process.env.DASHSCOPE_API_KEY || process.env.ALI_LLM_API_KEY || '';
+
+  // Auto-swap if the values were entered in reversed fields
+  const isKeyAnEndpoint = key.includes('aliyuncs.com') || key.includes('maas.');
+  const isBaseAKey = base.startsWith('sk-') || (base && !base.includes('aliyuncs.com') && !base.includes('maas.'));
+
+  if (isKeyAnEndpoint && isBaseAKey) {
+    base = key;
+  } else if (!base && isKeyAnEndpoint) {
+    base = key;
+  }
+  
+  if (base) {
+    base = base.trim();
+    if (!/^https?:\/\//i.test(base)) {
+      base = 'https://' + base;
+    }
+    if (base.endsWith('/')) {
+      base = base.slice(0, -1);
+    }
+    if (!base.endsWith('/chat/completions')) {
+      if (base.endsWith('/compatible-mode/v1')) {
+        base = base + '/chat/completions';
+      } else {
+        base = base + '/compatible-mode/v1/chat/completions';
+      }
+    }
+    return base;
+  }
+  
+  return 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 }
 
 async function callQwenJSON(model: string, systemPrompt: string, userPrompt: string): Promise<any> {
   const key = getDashScopeKey();
-  if (!key) throw new Error('DASHSCOPE_API_KEY is not configured.');
+  if (!key) throw new Error('DASHSCOPE_API_KEY is not configured or incorrect.');
 
-  const resp = await fetch(DASHSCOPE_COMPAT_URL, {
+  const endpoint = getDashScopeEndpoint();
+
+  const resp = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -538,7 +590,9 @@ app.post('/api/asr', async (req: express.Request, res: express.Response) => {
       content: [{ type: 'input_audio', input_audio: { data: audioData } }]
     }];
 
-    const resp = await fetch(DASHSCOPE_COMPAT_URL, {
+    const endpoint = getDashScopeEndpoint();
+
+    const resp = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -639,6 +693,98 @@ app.get('/api/db/status', (req, res) => {
     configured: db !== null,
     envId: process.env.CLOUDBASE_ENV_ID || null,
   });
+});
+
+app.get('/api/debug/dashscope', async (req, res) => {
+  const rawKey = process.env.DASHSCOPE_API_KEY || '';
+  const rawBase = process.env.DASHSCOPE_API_BASE || '';
+  const key = getDashScopeKey();
+  const endpoint = getDashScopeEndpoint();
+
+  const isKeyAnEndpoint = rawKey.includes('aliyuncs.com') || rawKey.includes('maas.');
+  const isBaseAKey = rawBase.startsWith('sk-') || (rawBase && !rawBase.includes('aliyuncs.com') && !rawBase.includes('maas.'));
+  const autoSwappingTriggered = isKeyAnEndpoint && isBaseAKey;
+
+  const keyMeta = {
+    configured: !!key,
+    autoSwappingTriggered,
+    rawKeyLength: rawKey.length,
+    rawKeyPrefix: rawKey.substring(0, 4),
+    rawBaseLength: rawBase.length,
+    rawBasePrefix: rawBase.substring(0, 4),
+    resolvedEndpoint: endpoint
+  };
+
+  if (isKeyAnEndpoint && !rawBase && !autoSwappingTriggered) {
+    res.json({
+      configured: false,
+      success: false,
+      error: '偵測到您在 DASHSCOPE_API_KEY 欄位中輸入了阿里百煉的 API 終端節點（Endpoint）「' + rawKey + '」，而不是實際的 API Key（通常以 sk- 開頭）。請在 Secrets 面板中分別設定：\n1. DASHSCOPE_API_KEY：填入您的 sk- 密鑰\n2. DASHSCOPE_API_BASE：填入該終端節點網址。',
+      keyMeta
+    });
+    return;
+  }
+
+  if (!key) {
+    res.json({
+      configured: false,
+      success: false,
+      error: 'DASHSCOPE_API_KEY is not configured or still set to placeholder/endpoint.',
+      keyMeta
+    });
+    return;
+  }
+
+  try {
+    const start = Date.now();
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        model: 'qwen-plus',
+        messages: [
+          { role: 'user', content: 'Say "DashScope API key test success!" in 1 sentence.' }
+        ],
+        max_tokens: 50
+      })
+    });
+
+    const elapsed = Date.now() - start;
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      res.json({
+        configured: true,
+        success: false,
+        status: resp.status,
+        error: errText,
+        elapsedMs: elapsed,
+        keyMeta
+      });
+      return;
+    }
+
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    res.json({
+      configured: true,
+      success: true,
+      response: content,
+      elapsedMs: elapsed,
+      modelUsed: data.model || 'qwen-plus',
+      keyMeta
+    });
+  } catch (err: any) {
+    res.json({
+      configured: true,
+      success: false,
+      error: err.message,
+      keyMeta
+    });
+  }
 });
 
 // Endpoint to register user account
