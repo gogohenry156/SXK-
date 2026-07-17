@@ -35,21 +35,56 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // DashScope (Alibaba Qwen) helpers — OpenAI-compatible mode
-const DASHSCOPE_COMPAT_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
 const QWEN_REPORT_MODEL = process.env.QWEN_REPORT_MODEL || 'qwen3.7-max';
 const QWEN_ASR_MODEL = process.env.QWEN_ASR_MODEL || 'qwen3-asr-flash';
 
 function getDashScopeKey(): string | null {
-  const key = process.env.DASHSCOPE_API_KEY || process.env.ALI_LLM_API_KEY;
+  let key = process.env.DASHSCOPE_API_KEY || process.env.ALI_LLM_API_KEY;
+  const base = process.env.DASHSCOPE_API_BASE;
+  
+  // Handle swapped variables
+  if (base && base.startsWith('sk-') && (!key || !key.startsWith('sk-'))) {
+    key = base;
+  }
+  
   if (!key || key === 'MY_DASHSCOPE_API_KEY') return null;
   return key;
+}
+
+function getDashScopeUrl(): string {
+  const base = process.env.DASHSCOPE_API_BASE;
+  const key = process.env.DASHSCOPE_API_KEY;
+  let host = 'dashscope.aliyuncs.com';
+
+  // Handle swapped variables
+  if (base && base.startsWith('sk-') && key && !key.startsWith('sk-')) {
+    host = key;
+  } else if (base && !base.startsWith('sk-')) {
+    host = base;
+  } else if (key && !key.startsWith('sk-')) {
+    host = key;
+  }
+
+  // Clean the host name
+  host = host.replace(/^(https?:\/\/)?/i, '')
+             .replace(/\/compatible-mode\/v1\/chat\/completions\/?$/i, '')
+             .replace(/\/compatible-mode\/v1\/?$/i, '')
+             .replace(/\/v1\/chat\/completions\/?$/i, '')
+             .replace(/\/+$/g, '');
+
+  if (!host || host === 'MY_DASHSCOPE_API_BASE') {
+    host = 'dashscope.aliyuncs.com';
+  }
+
+  return `https://${host}/compatible-mode/v1/chat/completions`;
 }
 
 // Uses axios (not global fetch) because @cloudbase/node-sdk pulls in web-streams-polyfill,
 // which replaces the global ReadableStream and makes undici's fetch throw
 // `webidl.is.ReadableStream` on some Node versions. axios goes through http/https directly.
 async function postDashScope(key: string, payload: any): Promise<{ status: number; data: any }> {
-  const resp = await axios.post(DASHSCOPE_COMPAT_URL, payload, {
+  const url = getDashScopeUrl();
+  const resp = await axios.post(url, payload, {
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${key}`
